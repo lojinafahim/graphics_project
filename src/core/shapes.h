@@ -91,6 +91,7 @@ const Color PAL_BLACK        = rgb(  0,   0,   0);
 
 //shapes
 void shapes_init();
+void shapes_flush();          // call once at the end of every frame
 void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, Color c);
 void drawRect(float x, float y, float w, float h, Color c);
 void drawCircle(float cx, float cy, float radius, Color c, int segments = 32);

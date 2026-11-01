@@ -15,28 +15,21 @@
 static const char* vertexShaderSrc = R"(
 #version 330 core
 layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec4 aColor;
+out vec4 vColor;
 uniform mat4 projection;
-uniform mat4 model;
 void main() {
-    gl_Position = projection * model * vec4(aPos, 0.0, 1.0);
+    gl_Position = projection * vec4(aPos, 0.0, 1.0);
+    vColor = aColor;
 }
 )";
 
 static const char* fragmentShaderSrc = R"(
 #version 330 core
+in vec4 vColor;
 out vec4 FragColor;
-uniform vec4 color;
-uniform float tint;
-uniform int grayscale;
-uniform float alpha;
 void main() {
-    vec3 c = color.rgb;
-    if (grayscale == 1) {
-        float g = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-        c = vec3(g, g, g);
-    }
-    c = mix(c, vec3(1.0, 0.0, 0.0), tint);
-    FragColor = vec4(c, color.a * alpha);
+    FragColor = vColor;
 }
 )";
 
@@ -80,15 +73,17 @@ static GLuint compileShader(GLenum type, const char* src) {
 }
 
 static GLuint program, vao, vbo;
-static int colorLoc;
-const int MAX_VERTICES = 1024;
-static int modelLoc;
 static glm::mat4 currentModel = glm::mat4(1.0f);
 static std::vector<glm::mat4> matrixStack;
-static int tintLoc, grayLoc, alphaLoc;
 static float currentTint = 0.0f;
 static bool currentGray = false;
 static float currentAlpha = 1.0f;
+
+// ---------- Batching: triangles are collected here and sent to the GPU together ----------
+// Each corner = 6 floats: x, y, r, g, b, a
+static const int FLOATS_PER_VERTEX = 6;
+static const int MAX_VERTICES = 60000;
+static std::vector<float> batch;
 
 // ---------- Text (one texture per letter, loaded once by text_init) ----------
 struct Character {
@@ -118,20 +113,18 @@ void shapes_init() {
     glGenBuffers(1, &vbo);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, MAX_VERTICES * 2 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glBufferData(GL_ARRAY_BUFFER, MAX_VERTICES * FLOATS_PER_VERTEX * sizeof(float), nullptr, GL_STREAM_DRAW);
+    // attribute 0: position (2 floats), attribute 1: color (4 floats)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
 
     glUseProgram(program);
     glm::mat4 projection = glm::ortho(0.0f, (float)SCREEN_W, 0.0f, (float)SCREEN_H, -1.0f, 1.0f);
-    unsigned int projLoc = glGetUniformLocation(program, "projection");
-    colorLoc = glGetUniformLocation(program, "color");
-    modelLoc = glGetUniformLocation(program, "model");
-    tintLoc  = glGetUniformLocation(program, "tint");
-    grayLoc  = glGetUniformLocation(program, "grayscale");
-    alphaLoc = glGetUniformLocation(program, "alpha");
+    glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-    glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    batch.reserve(MAX_VERTICES * FLOATS_PER_VERTEX);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -209,19 +202,41 @@ void text_init() {
 }
 
 
-void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, Color c) {
-    float v[] = { x1, y1, x2, y2, x3, y3 };
-
+// Sends everything collected so far to the GPU in ONE draw call.
+void shapes_flush() {
+    if (batch.empty()) return;
     glUseProgram(program);
-    glUniform4f(colorLoc, c.r, c.g, c.b, c.a);
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(currentModel));
-    glUniform1f(tintLoc, currentTint);
-    glUniform1i(grayLoc, currentGray ? 1 : 0);
-    glUniform1f(alphaLoc, currentAlpha);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(v), v);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    // new storage each time ("orphaning"), so the GPU never has to wait for the old data
+    glBufferData(GL_ARRAY_BUFFER, MAX_VERTICES * FLOATS_PER_VERTEX * sizeof(float), nullptr, GL_STREAM_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, batch.size() * sizeof(float), batch.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(batch.size() / FLOATS_PER_VERTEX));
+    batch.clear();
+}
+
+void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, Color c) {
+    // effects, done here on the CPU (same math as the old fragment shader)
+    float r = c.r, g = c.g, b = c.b;
+    if (currentGray) {
+        float gray = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        r = g = b = gray;
+    }
+    r = r + (1.0f - r) * currentTint;      // mix toward red (1, 0, 0)
+    g = g + (0.0f - g) * currentTint;
+    b = b + (0.0f - b) * currentTint;
+    float a = c.a * currentAlpha;
+
+    // transforms, also on the CPU: move each corner with the current model matrix
+    float xs[3] = { x1, x2, x3 };
+    float ys[3] = { y1, y2, y3 };
+    for (int i = 0; i < 3; i++) {
+        glm::vec4 p = currentModel * glm::vec4(xs[i], ys[i], 0.0f, 1.0f);
+        float v[FLOATS_PER_VERTEX] = { p.x, p.y, r, g, b, a };
+        batch.insert(batch.end(), v, v + FLOATS_PER_VERTEX);
+    }
+
+    if (batch.size() >= (size_t)(MAX_VERTICES - 3) * FLOATS_PER_VERTEX) shapes_flush();
 }
 
 void drawRect(float x, float y, float w, float h, Color c) {
@@ -401,6 +416,7 @@ void drawText(const std::string& text, float x, float y, float size, Color c) {
     float scale = size / FONT_LOAD_SIZE;
     float baseline = y - fontAscent * scale;
 
+    shapes_flush();   // draw the shapes collected so far first, so text lands on top
     glUseProgram(textProgram);
     glUniformMatrix4fv(textModelLoc, 1, GL_FALSE, glm::value_ptr(currentModel));
     glUniform4f(textColorLoc, c.r, c.g, c.b, c.a * currentAlpha);

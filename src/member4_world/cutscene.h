@@ -1,10 +1,3 @@
-// =====================================================================
-//  cutscene.h  -  the 10-20 second intro.
-//  Implemented by Friend 3 in member4_world/cutscene.cpp.
-// =====================================================================
+// The cutscene functions are declared in core/interfaces.h (the team's shared list).
 #pragma once
-
-void cutscene_start();            // reset its timer to 0
-void cutscene_update(float dt);   // advance time, animate
-void cutscene_draw();             // draw the current frame
-bool cutscene_finished();         // true once it is over
+#include "core/interfaces.h"

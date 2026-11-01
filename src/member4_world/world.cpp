@@ -5,6 +5,8 @@
 
 static float s_time = 0;
 
+void world_init() {}
+
 void world_update(float dt) {
     s_time += dt;
 }
@@ -206,3 +208,6 @@ void world_drawBackground() {
 
     drawTomb();
 }
+
+// Things drawn IN FRONT of the characters (skipped for now).
+void world_drawForeground() {}
