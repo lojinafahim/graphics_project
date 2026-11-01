@@ -1,256 +1,440 @@
-// =====================================================================
-//  shapes.cpp  -  SHARED. Implementation of the drawing helpers.
-//  You normally don't need to read this file - just use shapes.h.
-// =====================================================================
-#include "shapes.h"
-#include "config.h"
 #include <glad/gl.h>
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <cmath>
 #include <iostream>
+#include "core/shapes.h"
+#include "core/config.h"
+#include <cmath>
+#include <vector>
+#include <map>
+#include <string>
+#include <ft2build.h>
+#include FT_FREETYPE_H
 
-#include "stb_easy_font.h"   // tiny public-domain bitmap font (single header)
-
-static const float PI = 3.14159265358979f;
-
-static GLuint s_program = 0, s_vao = 0, s_vbo = 0;
-static GLint  s_uProj, s_uModel, s_uColor, s_uTint, s_uGray, s_uAlpha;
-
-static std::vector<glm::mat4> s_stack;
-static glm::mat4 s_model(1.0f);
-static float s_tint = 0.0f, s_alpha = 1.0f;
-static bool  s_gray = false;
-
-static const char* VERT_SRC = R"(
+static const char* vertexShaderSrc = R"(
 #version 330 core
 layout (location = 0) in vec2 aPos;
-uniform mat4 uProj;
-uniform mat4 uModel;
+uniform mat4 projection;
+uniform mat4 model;
 void main() {
-    gl_Position = uProj * uModel * vec4(aPos, 0.0, 1.0);
+    gl_Position = projection * model * vec4(aPos, 0.0, 1.0);
 }
 )";
 
-static const char* FRAG_SRC = R"(
+static const char* fragmentShaderSrc = R"(
 #version 330 core
 out vec4 FragColor;
-uniform vec4  uColor;
-uniform float uTint;    // 0..1 red damage tint
-uniform int   uGray;    // 1 = grayscale
-uniform float uAlpha;   // global fade
+uniform vec4 color;
+uniform float tint;
+uniform int grayscale;
+uniform float alpha;
 void main() {
-    vec3 c = uColor.rgb;
-    if (uTint > 0.0) {
-        c = mix(c, vec3(0.9, 0.05, 0.05), uTint * 0.75);
+    vec3 c = color.rgb;
+    if (grayscale == 1) {
+        float g = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        c = vec3(g, g, g);
     }
-    if (uGray == 1) {
-        float l = dot(c, vec3(0.299, 0.587, 0.114));
-        c = vec3(l) * 0.8;
-    }
-    FragColor = vec4(c, uColor.a * uAlpha);
+    c = mix(c, vec3(1.0, 0.0, 0.0), tint);
+    FragColor = vec4(c, color.a * alpha);
 }
 )";
 
-static GLuint compile(GLenum type, const char* src) {
+// ---------- Text shaders (from learnopengl.com: In Practice > Text Rendering) ----------
+static const char* textVertexSrc = R"(
+#version 330 core
+layout (location = 0) in vec4 vertex;
+out vec2 TexCoords;
+uniform mat4 projection;
+uniform mat4 model;
+void main() {
+    gl_Position = projection * model * vec4(vertex.xy, 0.0, 1.0);
+    TexCoords = vertex.zw;
+}
+)";
+
+static const char* textFragmentSrc = R"(
+#version 330 core
+in vec2 TexCoords;
+out vec4 FragColor;
+uniform sampler2D text;
+uniform vec4 textColor;
+void main() {
+    float coverage = texture(text, TexCoords).r;
+    FragColor = vec4(textColor.rgb, textColor.a * coverage);
+}
+)";
+
+static GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
     glCompileShader(s);
-    int ok;
+    GLint ok;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
         char log[512];
         glGetShaderInfoLog(s, 512, nullptr, log);
-        std::cerr << "[shapes] shader error:\n" << log << "\n";
+        std::cerr << "Shader error: " << log << "\n";
     }
     return s;
 }
 
+static GLuint program, vao, vbo;
+static int colorLoc;
+const int MAX_VERTICES = 1024;
+static int modelLoc;
+static glm::mat4 currentModel = glm::mat4(1.0f);
+static std::vector<glm::mat4> matrixStack;
+static int tintLoc, grayLoc, alphaLoc;
+static float currentTint = 0.0f;
+static bool currentGray = false;
+static float currentAlpha = 1.0f;
+
+// ---------- Text (one texture per letter, loaded once by text_init) ----------
+struct Character {
+    unsigned int textureID;
+    glm::ivec2   size;
+    glm::ivec2   bearing;
+    unsigned int advance;
+};
+
+static std::map<char, Character> characters;
+static GLuint textProgram, textVAO, textVBO;
+static int textModelLoc, textColorLoc;
+static const float FONT_LOAD_SIZE = 48.0f;
+static float fontAscent = 0;
+
 void shapes_init() {
-    GLuint vs = compile(GL_VERTEX_SHADER, VERT_SRC);
-    GLuint fs = compile(GL_FRAGMENT_SHADER, FRAG_SRC);
-    s_program = glCreateProgram();
-    glAttachShader(s_program, vs);
-    glAttachShader(s_program, fs);
-    glLinkProgram(s_program);
+    GLuint vs = compileShader(GL_VERTEX_SHADER, vertexShaderSrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
+    program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);
 
-    s_uProj  = glGetUniformLocation(s_program, "uProj");
-    s_uModel = glGetUniformLocation(s_program, "uModel");
-    s_uColor = glGetUniformLocation(s_program, "uColor");
-    s_uTint  = glGetUniformLocation(s_program, "uTint");
-    s_uGray  = glGetUniformLocation(s_program, "uGray");
-    s_uAlpha = glGetUniformLocation(s_program, "uAlpha");
-
-    glGenVertexArrays(1, &s_vao);
-    glGenBuffers(1, &s_vbo);
-    glBindVertexArray(s_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, MAX_VERTICES * 2 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    glUseProgram(s_program);
-    glm::mat4 proj = glm::ortho(0.0f, (float)SCREEN_W, 0.0f, (float)SCREEN_H, -1.0f, 1.0f);
-    glUniformMatrix4fv(s_uProj, 1, GL_FALSE, glm::value_ptr(proj));
+    glUseProgram(program);
+    glm::mat4 projection = glm::ortho(0.0f, (float)SCREEN_W, 0.0f, (float)SCREEN_H, -1.0f, 1.0f);
+    unsigned int projLoc = glGetUniformLocation(program, "projection");
+    colorLoc = glGetUniformLocation(program, "color");
+    modelLoc = glGetUniformLocation(program, "model");
+    tintLoc  = glGetUniformLocation(program, "tint");
+    grayLoc  = glGetUniformLocation(program, "grayscale");
+    alphaLoc = glGetUniformLocation(program, "alpha");
+
+    glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
 }
 
-// Sends a list of (x,y) points and draws them with the current settings.
-static void submit(const std::vector<float>& verts, GLenum mode, Color c) {
-    if (verts.empty()) return;
-    glUseProgram(s_program);
-    glUniformMatrix4fv(s_uModel, 1, GL_FALSE, glm::value_ptr(s_model));
-    glUniform4f(s_uColor, c.r, c.g, c.b, c.a);
-    glUniform1f(s_uTint, s_tint);
-    glUniform1i(s_uGray, s_gray ? 1 : 0);
-    glUniform1f(s_uAlpha, s_alpha);
-    glBindVertexArray(s_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
-    glDrawArrays(mode, 0, (GLsizei)(verts.size() / 2));
+void text_init() {
+    GLuint vs = compileShader(GL_VERTEX_SHADER, textVertexSrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, textFragmentSrc);
+    textProgram = glCreateProgram();
+    glAttachShader(textProgram, vs);
+    glAttachShader(textProgram, fs);
+    glLinkProgram(textProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    glUseProgram(textProgram);
+    glm::mat4 projection = glm::ortho(0.0f, (float)SCREEN_W, 0.0f, (float)SCREEN_H, -1.0f, 1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(textProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    textModelLoc = glGetUniformLocation(textProgram, "model");
+    textColorLoc = glGetUniformLocation(textProgram, "textColor");
+
+    FT_Library ft;
+    if (FT_Init_FreeType(&ft)) {
+        std::cerr << "ERROR::FREETYPE: Could not init FreeType Library\n";
+        return;
+    }
+
+    FT_Face face;
+    if (FT_New_Face(ft, ASSET_DIR "/fonts/Cinzel.ttf", 0, &face)) {
+        std::cerr << "ERROR::FREETYPE: Failed to load font\n";
+        FT_Done_FreeType(ft);
+        return;
+    }
+
+    FT_Set_Pixel_Sizes(face, 0, (int)FONT_LOAD_SIZE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    for (unsigned char c = 0; c < 128; c++) {
+        if (FT_Load_Char(face, c, FT_LOAD_RENDER)) {
+            std::cerr << "ERROR::FREETYPE: Failed to load Glyph\n";
+            continue;
+        }
+        unsigned int texture;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+                     face->glyph->bitmap.width, face->glyph->bitmap.rows,
+                     0, GL_RED, GL_UNSIGNED_BYTE, face->glyph->bitmap.buffer);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        Character ch = {
+            texture,
+            glm::ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows),
+            glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
+            (unsigned int)face->glyph->advance.x
+        };
+        characters[(char)c] = ch;
+        if (ch.bearing.y > fontAscent) fontAscent = (float)ch.bearing.y;
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    FT_Done_Face(face);
+    FT_Done_FreeType(ft);
+
+    glGenVertexArrays(1, &textVAO);
+    glGenBuffers(1, &textVBO);
+    glBindVertexArray(textVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, textVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
 }
 
-// ---------------------------------------------------------------- shapes
+
+void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, Color c) {
+    float v[] = { x1, y1, x2, y2, x3, y3 };
+
+    glUseProgram(program);
+    glUniform4f(colorLoc, c.r, c.g, c.b, c.a);
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(currentModel));
+    glUniform1f(tintLoc, currentTint);
+    glUniform1i(grayLoc, currentGray ? 1 : 0);
+    glUniform1f(alphaLoc, currentAlpha);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(v), v);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
 void drawRect(float x, float y, float w, float h, Color c) {
-    std::vector<float> v = { x, y,  x + w, y,  x + w, y + h,
-                             x, y,  x + w, y + h,  x, y + h };
-    submit(v, GL_TRIANGLES, c);
+    drawTriangle(x, y,   x + w, y,       x + w, y + h, c);
+    drawTriangle(x, y,   x + w, y + h,   x, y + h,     c);
+}
+
+void drawCircle(float cx, float cy, float radius, Color c, int segments) {
+    const float TWO_PI = 6.2831853f;
+    float step = TWO_PI / segments;
+
+    for (int i = 0; i < segments; i++) {
+        float a1 = i * step;
+        float a2 = (i + 1) * step;
+
+        float x1 = cx + radius * cos(a1);
+        float y1 = cy + radius * sin(a1);
+        float x2 = cx + radius * cos(a2);
+        float y2 = cy + radius * sin(a2);
+
+        drawTriangle(cx, cy, x1, y1, x2, y2, c);
+    }
+}
+
+void drawEllipse(float cx, float cy, float rx, float ry, Color c, int segments) {
+    const float TWO_PI = 6.2831853f;
+    float step = TWO_PI / segments;
+
+    for (int i = 0; i < segments; i++) {
+        float a1 = i * step;
+        float a2 = (i + 1) * step;
+
+        float x1 = cx + rx * cos(a1);
+        float y1 = cy + ry * sin(a1);
+        float x2 = cx + rx * cos(a2);
+        float y2 = cy + ry * sin(a2);
+
+        drawTriangle(cx, cy, x1, y1, x2, y2, c);
+    }
+}
+
+void drawLine(float x1, float y1, float x2, float y2, float thickness, Color c) {
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrt(dx * dx + dy * dy);
+    if (len == 0) return;
+
+    float nx = -dy / len * thickness / 2;
+    float ny =  dx / len * thickness / 2;
+
+    drawTriangle(x1 + nx, y1 + ny,   x1 - nx, y1 - ny,   x2 - nx, y2 - ny, c);
+    drawTriangle(x1 + nx, y1 + ny,   x2 - nx, y2 - ny,   x2 + nx, y2 + ny, c);
+}
+
+void drawPolygon(const std::vector<glm::vec2>& points, Color c) {
+    if (points.size() < 3) return;
+
+    for (size_t i = 1; i + 1 < points.size(); i++) {
+        drawTriangle(points[0].x, points[0].y,
+                     points[i].x, points[i].y,
+                     points[i + 1].x, points[i + 1].y, c);
+    }
+}
+
+void drawGradientRect(float x, float y, float w, float h, Color bottom, Color top, int steps) {
+    float stripH = h / steps;
+
+    for (int i = 0; i < steps; i++) {
+        float t = (i + 0.5f) / steps;
+        Color c = {
+            bottom.r + (top.r - bottom.r) * t,
+            bottom.g + (top.g - bottom.g) * t,
+            bottom.b + (top.b - bottom.b) * t,
+            bottom.a + (top.a - bottom.a) * t
+        };
+        drawRect(x, y + i * stripH, w, stripH, c);
+    }
 }
 
 void drawRectCentered(float cx, float cy, float w, float h, Color c) {
     drawRect(cx - w / 2, cy - h / 2, w, h, c);
 }
 
-void drawGradientRect(float x, float y, float w, float h, Color b, Color t, int steps) {
-    float sh = h / steps;
-    for (int i = 0; i < steps; i++) {
-        float k = (i + 0.5f) / steps;
-        Color c = { b.r + (t.r - b.r) * k, b.g + (t.g - b.g) * k,
-                    b.b + (t.b - b.b) * k, b.a + (t.a - b.a) * k };
-        drawRect(x, y + i * sh, w, sh + 0.5f, c);
+void drawRectOutline(float x, float y, float w, float h, float thickness, Color c) {
+    drawRect(x, y, w, thickness, c);                                       // bottom
+    drawRect(x, y + h - thickness, w, thickness, c);                       // top
+    drawRect(x, y + thickness, thickness, h - 2 * thickness, c);           // left
+    drawRect(x + w - thickness, y + thickness, thickness, h - 2 * thickness, c);  // right
+}
+
+void drawRoundedRect(float x, float y, float w, float h, float radius, Color c) {
+    float r = radius;
+    drawRect(x + r, y, w - 2 * r, h, c);              // middle, full height
+    drawRect(x, y + r, r, h - 2 * r, c);              // left strip
+    drawRect(x + w - r, y + r, r, h - 2 * r, c);      // right strip
+
+    drawCircle(x + r,     y + r,     r, c, 12);       // bottom-left corner
+    drawCircle(x + w - r, y + r,     r, c, 12);       // bottom-right
+    drawCircle(x + r,     y + h - r, r, c, 12);       // top-left
+    drawCircle(x + w - r, y + h - r, r, c, 12);       // top-right
+}
+
+void drawArc(float cx, float cy, float radius, float startDeg, float endDeg, float thickness, Color c, int segments) {
+    float inner = radius - thickness / 2;
+    float outer = radius + thickness / 2;
+    float start = glm::radians(startDeg);
+    float step = (glm::radians(endDeg) - start) / segments;
+
+    for (int i = 0; i < segments; i++) {
+        float a1 = start + i * step;
+        float a2 = start + (i + 1) * step;
+
+        float ix1 = cx + inner * cos(a1), iy1 = cy + inner * sin(a1);
+        float ox1 = cx + outer * cos(a1), oy1 = cy + outer * sin(a1);
+        float ix2 = cx + inner * cos(a2), iy2 = cy + inner * sin(a2);
+        float ox2 = cx + outer * cos(a2), oy2 = cy + outer * sin(a2);
+
+        drawTriangle(ix1, iy1, ox1, oy1, ox2, oy2, c);
+        drawTriangle(ix1, iy1, ox2, oy2, ix2, iy2, c);
     }
 }
 
-void drawRoundedRect(float x, float y, float w, float h, float r, Color c) {
-    if (r * 2 > w) r = w / 2;
-    if (r * 2 > h) r = h / 2;
-    std::vector<glm::vec2> pts;
-    const int seg = 6;
-    float cx[4] = { x + w - r, x + r, x + r, x + w - r };
-    float cy[4] = { y + h - r, y + h - r, y + r, y + r };
-    for (int corner = 0; corner < 4; corner++)
-        for (int i = 0; i <= seg; i++) {
-            float a = (corner * 90.0f + 90.0f * i / seg) * PI / 180.0f;
-            pts.push_back({ cx[corner] + r * std::cos(a), cy[corner] + r * std::sin(a) });
-        }
-    drawPolygon(pts, c);
+void translate(float x, float y) {
+    currentModel = glm::translate(currentModel, glm::vec3(x, y, 0.0f));
 }
 
-void drawRectOutline(float x, float y, float w, float h, float t, Color c) {
-    drawRect(x, y, w, t, c);
-    drawRect(x, y + h - t, w, t, c);
-    drawRect(x, y, t, h, c);
-    drawRect(x + w - t, y, t, h, c);
+void resetTransform() {
+    currentModel = glm::mat4(1.0f);
+    matrixStack.clear();
 }
 
-void drawEllipse(float cx, float cy, float rx, float ry, Color c, int segments) {
-    std::vector<float> v = { cx, cy };
-    for (int i = 0; i <= segments; i++) {
-        float a = 2 * PI * i / segments;
-        v.push_back(cx + rx * std::cos(a));
-        v.push_back(cy + ry * std::sin(a));
-    }
-    submit(v, GL_TRIANGLE_FAN, c);
+void rotate(float degrees) {
+    currentModel = glm::rotate(currentModel, glm::radians(degrees), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
-void drawCircle(float cx, float cy, float r, Color c, int segments) {
-    drawEllipse(cx, cy, r, r, c, segments);
+void scale(float sx, float sy) {
+    currentModel = glm::scale(currentModel, glm::vec3(sx, sy, 1.0f));
 }
 
-void drawArc(float cx, float cy, float r, float startDeg, float endDeg, float t, Color c, int segments) {
-    std::vector<float> v;
-    float a0 = startDeg * PI / 180.0f, a1 = endDeg * PI / 180.0f;
-    float rIn = r - t / 2, rOut = r + t / 2;
-    for (int i = 0; i <= segments; i++) {
-        float a = a0 + (a1 - a0) * i / segments;
-        v.push_back(cx + rOut * std::cos(a)); v.push_back(cy + rOut * std::sin(a));
-        v.push_back(cx + rIn  * std::cos(a)); v.push_back(cy + rIn  * std::sin(a));
-    }
-    submit(v, GL_TRIANGLE_STRIP, c);
+void pushMatrix() {
+    matrixStack.push_back(currentModel);
 }
 
-void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, Color c) {
-    std::vector<float> v = { x1, y1, x2, y2, x3, y3 };
-    submit(v, GL_TRIANGLES, c);
+void popMatrix() {
+    if (matrixStack.empty()) return;
+    currentModel = matrixStack.back();
+    matrixStack.pop_back();
 }
 
-void drawLine(float x1, float y1, float x2, float y2, float t, Color c) {
-    float dx = x2 - x1, dy = y2 - y1;
-    float len = std::sqrt(dx * dx + dy * dy);
-    if (len < 0.0001f) return;
-    float nx = -dy / len * t / 2, ny = dx / len * t / 2;
-    std::vector<float> v = { x1 + nx, y1 + ny,  x2 + nx, y2 + ny,  x2 - nx, y2 - ny,
-                             x1 + nx, y1 + ny,  x2 - nx, y2 - ny,  x1 - nx, y1 - ny };
-    submit(v, GL_TRIANGLES, c);
+void setTint(float amount) {
+    currentTint = amount;
 }
 
-void drawPolygon(const std::vector<glm::vec2>& pts, Color c) {
-    if (pts.size() < 3) return;
-    std::vector<float> v;
-    for (const auto& p : pts) { v.push_back(p.x); v.push_back(p.y); }
-    submit(v, GL_TRIANGLE_FAN, c);
+void setGrayscale(bool on) {
+    currentGray = on;
 }
 
-// ------------------------------------------------------------------ text
-// stb_easy_font letters are ~7 units tall; we scale them to `size` pixels.
-static const float FONT_BASE_HEIGHT = 7.0f;
+void setAlpha(float a) {
+    currentAlpha = a;
+}
 
+void resetEffects() {
+    currentTint = 0.0f;
+    currentGray = false;
+    currentAlpha = 1.0f;
+}
+
+// ---------- Text drawing (adapted from RenderText in learnopengl.com) ----------
 float textWidth(const std::string& text, float size) {
-    return stb_easy_font_width((char*)text.c_str()) * (size / FONT_BASE_HEIGHT);
+    float scale = size / FONT_LOAD_SIZE;
+    float w = 0;
+    for (char c : text) w += (characters[c].advance >> 6) * scale;
+    return w;
 }
 
 void drawText(const std::string& text, float x, float y, float size, Color c) {
-    if (text.empty()) return;
-    static std::vector<char> buffer;
-    buffer.resize(text.size() * 1000 + 256);   // some letters need many quads
-    int quads = stb_easy_font_print(0, 0, (char*)text.c_str(), nullptr,
-                                    buffer.data(), (int)buffer.size());
-    float s = size / FONT_BASE_HEIGHT;
-    std::vector<float> v;
-    v.reserve(quads * 12);
-    const float* q = (const float*)buffer.data();
-    for (int i = 0; i < quads; i++) {
-        // each vertex = x, y, z, color(4 bytes) = 4 floats; 4 vertices per quad
-        float px[4], py[4];
-        for (int k = 0; k < 4; k++) {
-            px[k] = x + q[(i * 4 + k) * 4 + 0] * s;
-            py[k] = y - q[(i * 4 + k) * 4 + 1] * s;   // font is y-down, world is y-up
-        }
-        float tri[12] = { px[0], py[0], px[1], py[1], px[2], py[2],
-                          px[0], py[0], px[2], py[2], px[3], py[3] };
-        v.insert(v.end(), tri, tri + 12);
+    float scale = size / FONT_LOAD_SIZE;
+    float baseline = y - fontAscent * scale;
+
+    glUseProgram(textProgram);
+    glUniformMatrix4fv(textModelLoc, 1, GL_FALSE, glm::value_ptr(currentModel));
+    glUniform4f(textColorLoc, c.r, c.g, c.b, c.a * currentAlpha);
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(textVAO);
+
+    for (char letter : text) {
+        Character ch = characters[letter];
+
+        float xpos = x + ch.bearing.x * scale;
+        float ypos = baseline - (ch.size.y - ch.bearing.y) * scale;
+        float w = ch.size.x * scale;
+        float h = ch.size.y * scale;
+
+        float vertices[6][4] = {
+            { xpos,     ypos + h, 0.0f, 0.0f },
+            { xpos,     ypos,     0.0f, 1.0f },
+            { xpos + w, ypos,     1.0f, 1.0f },
+
+            { xpos,     ypos + h, 0.0f, 0.0f },
+            { xpos + w, ypos,     1.0f, 1.0f },
+            { xpos + w, ypos + h, 1.0f, 0.0f }
+        };
+
+        glBindTexture(GL_TEXTURE_2D, ch.textureID);
+        glBindBuffer(GL_ARRAY_BUFFER, textVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        x += (ch.advance >> 6) * scale;
     }
-    submit(v, GL_TRIANGLES, c);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void drawTextCentered(const std::string& text, float cx, float y, float size, Color c) {
     drawText(text, cx - textWidth(text, size) / 2, y, size, c);
 }
-
-// ------------------------------------------------------------ transforms
-void pushMatrix() { s_stack.push_back(s_model); }
-void popMatrix() {
-    if (!s_stack.empty()) { s_model = s_stack.back(); s_stack.pop_back(); }
-}
-void translate(float x, float y) { s_model = glm::translate(s_model, glm::vec3(x, y, 0)); }
-void rotate(float deg) { s_model = glm::rotate(s_model, glm::radians(deg), glm::vec3(0, 0, 1)); }
-void scale(float sx, float sy) { s_model = glm::scale(s_model, glm::vec3(sx, sy, 1)); }
-
-// --------------------------------------------------------------- effects
-void setTint(float amount) { s_tint = amount < 0 ? 0 : (amount > 1 ? 1 : amount); }
-void setGrayscale(bool on) { s_gray = on; }
-void setAlpha(float a) { s_alpha = a < 0 ? 0 : (a > 1 ? 1 : a); }
-void resetEffects() { s_tint = 0; s_gray = false; s_alpha = 1; }
