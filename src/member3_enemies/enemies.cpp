@@ -23,9 +23,14 @@
 #include "../core/game_state.h"
 #include "../core/interfaces.h"
 #include <cmath>
+#include <cstdlib>
+#include <ctime>
 
-void enemies_init() {}
-void enemies_reset() {}
+void waves_reset();   // in waves_combat.cpp (same member, so it's not in interfaces.h)
+
+// Seed rand() once so lanes are different every game
+void enemies_init()  { std::srand((unsigned)std::time(nullptr)); }
+void enemies_reset() { waves_reset(); }
 
 void spawnEnemy(EntityType type, int lane) {
     Entity e;

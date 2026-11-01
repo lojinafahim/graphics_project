@@ -25,15 +25,75 @@
 #include "../core/game_state.h"
 #include "../core/input.h"
 #include "../core/interfaces.h"
+#include <cstdlib>
 
-static int  s_wave = 1;
-static bool s_allCleared = false;
+// ------------------------------------------------------------ R19: waves
+// Reference: LearnOpenGL - 2D Game > Levels: a list of levels + current index,
+//   and GameLevel::IsCompleted() -> "is anything still alive?"
+// Reference: LearnOpenGL - 2D Game > Particles: rand() for random values,
+//   and Life -= dt as a countdown timer.
+const float SPAWN_GAP  = 2.5f;   // seconds between raiders inside a wave
+const float WAVE_PAUSE = 3.0f;   // breather before a wave starts
+
+static int   s_wave       = 1;          // 1..NUM_WAVES
+static int   s_spawned    = 0;          // raiders spawned so far in this wave
+static float s_spawnTimer = WAVE_PAUSE; // countdown to the next spawn
+static bool  s_allCleared = false;
 
 int  currentWave()     { return s_wave; }
 bool allWavesCleared() { return s_allCleared; }
 
+// Called from enemies_reset() (Start / Restart)
+void waves_reset() {
+    s_wave = 1;
+    s_spawned = 0;
+    s_spawnTimer = WAVE_PAUSE;
+    s_allCleared = false;
+}
+
+// like GameLevel::IsCompleted(), but returns true while something is alive
+static bool anyRaiderAlive() {
+    for (const Entity& e : g_enemies)
+        if (e.alive) return true;
+    return false;
+}
+
+// Wave 1: easy | Wave 2: easy + medium | Wave 3: easy + medium + hard.
+// The first spawns of a wave cycle through every allowed type, so each type
+// is guaranteed to appear. The rest are random.
+static EntityType pickType(int wave, int index) {
+    int kinds = wave;                                  // 1, 2 or 3 types allowed
+    int k = (index < kinds) ? index : std::rand() % kinds;
+    return (EntityType)(ENEMY_EASY + k);
+}
+
 void waves_update(float dt) {
-    // TODO
+    if (s_allCleared) return;
+    int size = WAVE_SIZE[s_wave - 1];
+
+    // 1. Still spawning this wave: one raider every SPAWN_GAP seconds
+    if (s_spawned < size) {
+        s_spawnTimer -= dt;
+        if (s_spawnTimer <= 0) {
+            spawnEnemy(pickType(s_wave, s_spawned), std::rand() % NUM_LANES);
+            s_spawned++;
+            s_spawnTimer = SPAWN_GAP;
+        }
+        return;
+    }
+
+    // 2. Last raider has spawned -> the wave is over.
+    //    Wait until every raider on screen is defeated.
+    if (anyRaiderAlive()) return;
+
+    // 3. Screen is clear
+    if (s_wave == NUM_WAVES) {
+        s_allCleared = true;               // Member 1 shows WIN
+        return;
+    }
+    s_wave++;                              // next wave (the HUD badge updates by itself)
+    s_spawned = 0;
+    s_spawnTimer = WAVE_PAUSE;
 }
 // ------------------------------------------------------------ combat helpers
 const float MELEE_INTERVAL = 1.0f;   // seconds between blows in a fight
