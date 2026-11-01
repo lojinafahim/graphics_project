@@ -34,6 +34,7 @@ void grid_update(float dt) {
 
     if (mouseClicked() && s_hoverLane != -1) {
         s_selected[s_hoverLane] = !s_selected[s_hoverLane];
+         playSound("select");
     }
 
     bool jump = keyPressed(GLFW_KEY_W) || keyPressed(GLFW_KEY_UP);
@@ -73,7 +74,10 @@ void hud_update(float dt) {
         for (int lane = 0; lane < NUM_LANES; lane++) {
             if (!s_selected[lane]) continue;
             anySelected = true;
-            if (spendCoins(c.cost)) spawnPlayer(c.type, lane);
+            if (spendCoins(c.cost)) {
+                spawnPlayer(c.type, lane);
+                playSound("place");
+            }
         }
         if (!anySelected) s_hintTimer = 2.0f;
     }
