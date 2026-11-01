@@ -6,7 +6,8 @@
 #include "../core/interfaces.h"
 
 static bool s_selected[NUM_LANES] = {};
-static int s_hoverLane = -1;   
+static int s_hoverLane = -1;
+static float s_hintTimer = 0;   
 
 struct Card { EntityType type; int cost; const char* name; };
 static const Card CARDS[3] = {
@@ -48,7 +49,21 @@ void grid_draw() {
 void hud_update(float dt) {
     // pause button (top-left badge)
     if (mouseClicked() && mouseInRect(16, SCREEN_H - 46, 34, 34)) setScreen(SCREEN_PAUSED);
-    // TODO: card click logic
+        if (s_hintTimer > 0) s_hintTimer -= dt;
+
+    for (int i = 0; i < 3; i++) {
+        const Card& c = CARDS[i];
+        bool unlocked = canAfford(c.cost);
+        if (!unlocked || !mouseClicked() || !mouseInRect(cardX(i), CARD_Y, CARD_W, CARD_H)) continue;
+
+        bool anySelected = false;
+        for (int lane = 0; lane < NUM_LANES; lane++) {
+            if (!s_selected[lane]) continue;
+            anySelected = true;
+            if (spendCoins(c.cost)) spawnPlayer(c.type, lane);
+        }
+        if (!anySelected) s_hintTimer = 2.0f;
+    }
 
     // TEST KEYS (remove before submitting)
     if (keyPressed(GLFW_KEY_EQUAL)) addCoins(10);     // '+' key
@@ -100,4 +115,11 @@ void hud_draw() {
     drawRect(35, SCREEN_H - 38, 5, 18, PAL_WHITE);
     drawText("Wave " + std::to_string(currentWave()) + " / " + std::to_string(NUM_WAVES),
              60, SCREEN_H - 21, 16, PAL_WHITE);
+
+    
+    if (s_hintTimer > 0) {
+        drawTextCentered("Select a lane first!", SCREEN_W / 2.0f, HUD_TOP + 40, 22, PAL_SUN);
+    }
+
+
 }
