@@ -46,14 +46,31 @@ static const Color RAIDER_SKIN = rgb(150, 98, 66);
 static const Color RAIDER_WRAP = rgb(150, 60, 40);
 
 // Hunched raider body. Drawn facing RIGHT; drawEnemyModel mirrors it to face left.
-static void drawRaiderBody(float bulk) {
-    // bent legs
-    drawLine(-6, 0, -2, 13, 6, RAIDER_SKIN);
-    drawLine(-2, 13, -8, 25, 6, RAIDER_SKIN);
-    drawLine(7, 0, 11, 13, 6, RAIDER_SKIN);
-    drawLine(11, 13, 4, 25, 6, RAIDER_SKIN);
-    drawRect(-10, 0, 8, 3, PAL_RAIDER_DARK);
-    drawRect(5, 0, 9, 3, PAL_RAIDER_DARK);
+// Reference: LearnOpenGL - Getting started > Transformations ("In practice"):
+//   trans = glm::translate(...); trans = glm::rotate(trans, time, z-axis);
+//   -> translate to the HIP, then rotate, so the leg swings around the hip.
+// Reference: LearnOpenGL - Getting started > Shaders ("Uniforms"):
+//   sin(timeValue) -> smooth back-and-forth value, used here as the swing angle.
+static void drawRaiderBody(float bulk, float walkPhase) {
+    float swing = std::sin(walkPhase) * 25.0f;       // -25..+25 degrees
+
+    // back leg: pivot at the hip (-8, 25)
+    pushMatrix();
+    translate(-8, 25);
+    rotate(swing);
+    drawLine(0, 0, 6, -12, 6, RAIDER_SKIN);          // thigh
+    drawLine(6, -12, 2, -25, 6, RAIDER_SKIN);        // shin
+    drawRect(-2, -25, 8, 3, PAL_RAIDER_DARK);        // foot
+    popMatrix();
+
+    // front leg: pivot at the hip (4, 25), swings the opposite way
+    pushMatrix();
+    translate(4, 25);
+    rotate(-swing);
+    drawLine(0, 0, 7, -12, 6, RAIDER_SKIN);
+    drawLine(7, -12, 3, -25, 6, RAIDER_SKIN);
+    drawRect(1, -25, 9, 3, PAL_RAIDER_DARK);
+    popMatrix();
     // ragged skirt with torn edge
     drawPolygon({ {-13 * bulk, 22}, {13 * bulk, 22}, {12 * bulk, 32}, {-12 * bulk, 32} }, PAL_RAIDER_RAGS);
     for (int i = 0; i < 4; i++) {
@@ -82,7 +99,7 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
     scale(-s, s);      // mirror: raiders face LEFT toward the tomb
 
     if (type == ENEMY_EASY) {                         // ---- slingshot raider
-        drawRaiderBody(1.0f);
+        drawRaiderBody(1.0f, animTime * 8);
         float spin = animTime * 400;                  // sling whirling overhead
         pushMatrix();
         translate(8, 58);
@@ -94,7 +111,7 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
         drawRect(-14, 30, 6, 8, rgb(120, 100, 70));   // stone pouch
     }
     else if (type == ENEMY_MEDIUM) {                  // ---- fire-pot raider
-        drawRaiderBody(1.0f);
+        drawRaiderBody(1.0f, animTime * 8);
         drawLine(4, 42, 14, 24, 4, RAIDER_SKIN);      // arms down to the pot
         drawCircle(18, 16, 9, rgb(120, 70, 40));      // clay pot
         drawRect(12, 22, 12, 4, rgb(90, 50, 30));
@@ -105,7 +122,7 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
     }
     else {                                            // ---- axe brute
         scale(1.35f, 1.35f);
-        drawRaiderBody(1.3f);
+        drawRaiderBody(1.3f, animTime * 14);
         drawEllipse(-2, 52, 14, 7, PAL_RAIDER_DARK);  // fur shoulder
         float raise = std::sin(animTime * 3) * 10;
         pushMatrix();
