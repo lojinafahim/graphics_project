@@ -93,13 +93,17 @@ static void drawRaiderBody(float bulk, float walkPhase) {
     popMatrix();
 }
 
+// true while drawing a raider that is in a melee fight (set by enemies_draw)
+static bool s_fighting = false;
+
 void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) {
+    float walk = s_fighting ? 0.0f : animTime * 8;   // legs stand still in a fight
     pushMatrix();
     translate(x, y);
     scale(-s, s);      // mirror: raiders face LEFT toward the tomb
 
     if (type == ENEMY_EASY) {                         // ---- slingshot raider
-        drawRaiderBody(1.0f, animTime * 8);
+        drawRaiderBody(1.0f, walk);
         float spin = animTime * 400;                  // sling whirling overhead
         pushMatrix();
         translate(8, 58);
@@ -111,7 +115,7 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
         drawRect(-14, 30, 6, 8, rgb(120, 100, 70));   // stone pouch
     }
     else if (type == ENEMY_MEDIUM) {                  // ---- fire-pot raider
-        drawRaiderBody(1.0f, animTime * 8);
+        drawRaiderBody(1.0f, walk);
         drawLine(4, 42, 14, 24, 4, RAIDER_SKIN);      // arms down to the pot
         drawCircle(18, 16, 9, rgb(120, 70, 40));      // clay pot
         drawRect(12, 22, 12, 4, rgb(90, 50, 30));
@@ -122,9 +126,12 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
     }
     else {                                            // ---- axe brute
         scale(1.35f, 1.35f);
-        drawRaiderBody(1.3f, animTime * 14);
+        drawRaiderBody(1.3f, walk * 1.75f);
         drawEllipse(-2, 52, 14, 7, PAL_RAIDER_DARK);  // fur shoulder
-        float raise = std::sin(animTime * 3) * 10;
+                // fighting: big chop about once per second (matches MELEE_INTERVAL)
+        // walking:  small idle sway
+        float raise = s_fighting ? std::sin(animTime * 6.28f) * 50
+                                 : std::sin(animTime * 3) * 10;
         pushMatrix();
         translate(6, 48);
         rotate(40 + raise);
@@ -220,7 +227,9 @@ void enemies_draw() {
     for (const Entity& e : g_enemies) {
         drawEllipse(e.x, e.y + 1, e.type == ENEMY_HARD ? 30.0f : 20.0f, 5, rgb(120, 90, 50, 90));
         setTint(e.damageAmount());
+               s_fighting = (e.state == STATE_FIGHTING);
         drawEnemyModel(e.type, e.x, e.y, 0.85f, e.animTime);
+        s_fighting = false;      // so the cutscene always draws normally
         resetEffects();
         drawHealthBar(e.x, e.y + e.height + 2, e.hp, e.maxHp);
     }
