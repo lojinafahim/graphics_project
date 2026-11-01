@@ -110,10 +110,10 @@ void hud_draw() {
     drawText("CLICK lanes to select   |   W / S  jump / duck   |   ESC pause",
              400, 64, 13, rgb(170, 180, 205));
 
-    // coin counter (bottom-right)
-    drawPanel(SCREEN_W - 200, 22, 180, 64);
-    drawCoinIcon(SCREEN_W - 160, 54, 20);
-    drawText(std::to_string(g_coins), SCREEN_W - 126, 72, 30, PAL_UI_GOLD);
+    // coin counter 
+    drawPanel(SCREEN_W - 200, SCREEN_H - 58, 180, 50);
+    drawCoinIcon(SCREEN_W - 170, SCREEN_H - 33, 16);
+    drawText(std::to_string(g_coins), SCREEN_W - 140, SCREEN_H - 20, 26, PAL_UI_GOLD);
 
     // wave badge + pause button (top-left)
     drawPanel(12, SCREEN_H - 50, 210, 42);

@@ -11,6 +11,7 @@
 #include <string>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include "core/font_cinzel.h"   // the font stored as bytes (no .ttf needed at runtime)
 
 static const char* vertexShaderSrc = R"(
 #version 330 core
@@ -154,7 +155,7 @@ void text_init() {
     }
 
     FT_Face face;
-    if (FT_New_Face(ft, ASSET_DIR "/fonts/Cinzel.ttf", 0, &face)) {
+    if (FT_New_Memory_Face(ft, FONT_CINZEL_DATA, FONT_CINZEL_SIZE, 0, &face)) {
         std::cerr << "ERROR::FREETYPE: Failed to load font\n";
         FT_Done_FreeType(ft);
         return;
