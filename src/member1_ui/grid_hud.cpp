@@ -30,7 +30,14 @@ void grid_update(float dt) {
         s_selected[s_hoverLane] = !s_selected[s_hoverLane];
     }
 
-    // TODO: W/Up and S/Down -> playerJump / playerDuck for selected lanes
+    bool jump = keyPressed(GLFW_KEY_W) || keyPressed(GLFW_KEY_UP);
+    bool duck = keyPressed(GLFW_KEY_S) || keyPressed(GLFW_KEY_DOWN);
+
+    for (int lane = 0; lane < NUM_LANES; lane++) {
+        if (!s_selected[lane]) continue;
+        if (jump) playerJump(lane);
+        if (duck) playerDuck(lane);
+    }
 }
 
 void grid_draw() {
