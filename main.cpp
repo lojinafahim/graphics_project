@@ -1,9 +1,5 @@
-// =====================================================================
-//  main.cpp  -  Window, game loop and screen flow.
-//  Owner: Member 1. Other members should NOT need to edit this file:
-//  everything you write is called from here through interfaces.h.
-// =====================================================================
-#define GLAD_GL_IMPLEMENTATION      // only in THIS file
+
+#define GLAD_GL_IMPLEMENTATION    
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -14,9 +10,9 @@
 #include "core/game_state.h"
 #include "core/interfaces.h"
 
-static bool s_showLaneDebug = false;   // press F1 in game to show lanes
+static bool s_showLaneDebug = false;  
 
-// Debug overlay: lane boundaries + numbers (helps everyone place things)
+
 static void drawLaneDebug() {
     for (int lane = 0; lane < NUM_LANES; lane++) {
         drawRectOutline(TOMB_RIGHT_X, laneBottomY(lane), GRID_RIGHT_X - TOMB_RIGHT_X,
@@ -31,7 +27,7 @@ static void drawLaneDebug() {
              SCREEN_W / 2.0f - 60, SCREEN_H - 14, 12, rgb(255, 0, 255));
 }
 
-// Order matters: later = drawn on top
+
 static void drawGameScene() {
     world_drawBackground();
     grid_draw();
@@ -75,7 +71,7 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);   // vsync
+    glfwSwapInterval(1);   
 
     if (gladLoadGL(glfwGetProcAddress) == 0) {
         std::cerr << "Failed to initialize OpenGL context\n";
@@ -83,7 +79,7 @@ int main() {
     }
 
     shapes_init();
-    text_init();          // FreeType font (learnopengl Text Rendering)
+    text_init();         
     input_init(window);
     sound_init();
     ui_init();
@@ -99,7 +95,7 @@ int main() {
         double now = glfwGetTime();
         float dt = (float)(now - lastTime);
         lastTime = now;
-        if (dt > 0.05f) dt = 0.05f;   // avoid huge jumps after dragging the window
+        if (dt > 0.05f) dt = 0.05f;  
 
         glfwPollEvents();
         input_update();
@@ -141,14 +137,14 @@ int main() {
             drawGameScene();
             break;
 
-        case SCREEN_PAUSED:          // game frozen underneath the menu
+        case SCREEN_PAUSED:          
             drawGameScene();
             pauseMenu_update(dt);
             pauseMenu_draw();
             break;
 
         case SCREEN_WIN:
-        case SCREEN_LOSE:            // everything stops, menu on top
+        case SCREEN_LOSE:           
             drawGameScene();
             endMenu_update(dt);
             endMenu_draw();
@@ -158,7 +154,7 @@ int main() {
             break;
         }
 
-        shapes_flush();       // draw everything collected this frame in one batch
+        shapes_flush();       
         glfwSwapBuffers(window);
     }
 

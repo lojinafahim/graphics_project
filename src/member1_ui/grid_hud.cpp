@@ -1,20 +1,3 @@
-// =====================================================================
-//  MEMBER 1 - grid_hud.cpp
-//  Lane grid (hover, click-to-select), W/S keys, coin counter, player cards.
-//
-//  Starter version: themed bottom HUD bar like the reference picture -
-//  3 player cards with portraits + costs (grayscale when you can't afford
-//  them), coin counter bottom-right, wave badge + pause button top-left.
-//
-//  TODO (Member 1):
-//   [ ] Hover highlight on a lane; click toggles selected; several lanes at once
-//   [ ] W / Up  -> playerJump(lane) for every selected lane
-//       S / Down -> playerDuck(lane) for every selected lane
-//   [ ] Cards: no hover reaction when locked (done visually - check it),
-//       click an unlocked card -> spendCoins(cost) + spawnPlayer(type, lane)
-//       for each selected lane (decide with the team: what if none selected?)
-//   [ ] playSound("select") / playSound("place")
-// =====================================================================
 #include "../core/config.h"
 #include "../core/shapes.h"
 #include "../core/input.h"
@@ -23,6 +6,7 @@
 #include "../core/interfaces.h"
 
 static bool s_selected[NUM_LANES] = {};
+static int s_hoverLane = -1;   
 
 struct Card { EntityType type; int cost; const char* name; };
 static const Card CARDS[3] = {
@@ -38,12 +22,27 @@ bool isLaneSelected(int lane) {
 }
 
 void grid_update(float dt) {
-    // TODO: hover + click toggling (use laneAtY(mouseY()) and mouseClicked())
+    s_hoverLane = laneAtY(mouseY());
+    if (mouseX() < TOMB_RIGHT_X) s_hoverLane = -1;
+
+    if (mouseClicked() && s_hoverLane != -1) {
+        s_selected[s_hoverLane] = !s_selected[s_hoverLane];
+    }
+
     // TODO: W/Up and S/Down -> playerJump / playerDuck for selected lanes
 }
 
 void grid_draw() {
-    // TODO: draw lane highlight for hovered + selected lanes
+    for (int lane = 0; lane < NUM_LANES; lane++) {
+        float y = laneBottomY(lane);
+        if (s_selected[lane]) {
+            drawRect(TOMB_RIGHT_X, y, SCREEN_W - TOMB_RIGHT_X, LANE_HEIGHT, rgb(226, 180, 76, 70));
+            drawRectOutline(TOMB_RIGHT_X, y, SCREEN_W - TOMB_RIGHT_X, LANE_HEIGHT, 3, PAL_UI_GOLD);
+        }
+        if (lane == s_hoverLane) {
+            drawRect(TOMB_RIGHT_X, y, SCREEN_W - TOMB_RIGHT_X, LANE_HEIGHT, rgb(255, 255, 255, 40));
+        }
+    }
 }
 
 void hud_update(float dt) {
