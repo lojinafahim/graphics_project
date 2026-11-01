@@ -142,14 +142,48 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
 static float enemySpeed(EntityType type) {
     return (type == ENEMY_HARD) ? SPEED_ENEMY_RUN : SPEED_ENEMY_WALK;
 }
+// R18: ranged raiders fire every FIRE_INTERVAL seconds
+const float FIRE_INTERVAL = 2.5f;
+
+// Adds one projectile to the shared list g_attacks
+// (like the particle list in LearnOpenGL > 2D Game > Particles)
+static void fireProjectile(const Entity& e) {
+    Attack a;
+    a.lane = e.lane;
+    a.fromPlayer = false;
+    a.damage = DMG_NORMAL;
+    if (e.type == ENEMY_EASY) {          // sling stone - head height, dodged by DUCKING
+        a.height = ATTACK_HIGH;
+        a.x  = e.x - 15;
+        a.y  = e.y + 45;
+        a.vx = -SPEED_PROJECTILE;        // minus = flies left
+    } else {                             // fire pot - on the ground, dodged by JUMPING
+        a.height = ATTACK_LOW;
+        a.x  = e.x - 20;
+        a.y  = e.y + 8;
+        a.vx = -SPEED_PROJECTILE * 0.6f; // rolls a bit slower
+    }
+    g_attacks.push_back(a);
+}
 
 void enemies_update(float dt) {
     for (Entity& e : g_enemies) {
         if (!e.alive) continue;
         e.animTime += dt;
         // LearnOpenGL Camera "Movement speed": position += speed * deltaTime
-        if (e.state == STATE_WALKING)
+             if (e.state == STATE_WALKING)
             e.x -= enemySpeed(e.type) * dt;      // minus = move left
+
+        // R18: shoot from the moment they appear (brief 3.1).
+        // Countdown timer, like LearnOpenGL Particles: p.Life -= dt;
+        // attackCooldown starts at 0, so the first shot is immediate.
+        if (e.type != ENEMY_HARD) {
+            e.attackCooldown -= dt;
+            if (e.attackCooldown <= 0) {
+                fireProjectile(e);
+                e.attackCooldown = FIRE_INTERVAL;
+            }
+        }
     }
     // TODO: firing
 
@@ -160,6 +194,27 @@ void enemies_update(float dt) {
     if (keyPressed(GLFW_KEY_8)) spawnEnemy(ENEMY_MEDIUM, lane);
     if (keyPressed(GLFW_KEY_9)) spawnEnemy(ENEMY_HARD, lane);
 }
+// Sling stone: lobbed up, then drops back to head height (arc from above)
+static void drawStone(const Attack& a) {
+    float t = std::fmin(a.animTime / 0.6f, 1.0f);    // 0..1 during the lob
+    float lift = 40.0f * 4.0f * t * (1.0f - t);      // parabola: 0 -> 40 -> 0 px
+    drawCircle(a.x, a.y + lift, 4.5f, rgb(120, 115, 105));
+    drawCircle(a.x - 1, a.y + lift + 1, 2, rgb(170, 165, 150));   // highlight
+}
+
+// Fire pot: spins while rolling left, flame on top
+// Reference: LearnOpenGL Transformations "In practice" - translate, then rotate by time
+static void drawFirePot(const Attack& a) {
+    float f = 1 + 0.25f * std::sin(a.animTime * 20);              // flicker
+    drawEllipse(a.x, a.y + 12, 5 * f, 9 * f, PAL_FIRE);
+    drawEllipse(a.x, a.y + 10, 2.5f * f, 5 * f, PAL_FIRE_CORE);
+    pushMatrix();
+    translate(a.x, a.y);
+    rotate(a.animTime * 360);                        // + = counter-clockwise = rolling left
+    drawCircle(0, 0, 8, rgb(120, 70, 40));
+    drawRect(-8, -1.5f, 16, 3, rgb(160, 100, 60));   // stripe so you can see it spin
+    popMatrix();
+}
 
 void enemies_draw() {
     for (const Entity& e : g_enemies) {
@@ -169,7 +224,12 @@ void enemies_draw() {
         resetEffects();
         drawHealthBar(e.x, e.y + e.height + 2, e.hp, e.maxHp);
     }
-    // TODO: draw enemy projectiles (g_attacks where fromPlayer == false)
+        // R18: enemy projectiles (arrows are drawn by Member 2)
+    for (const Attack& a : g_attacks) {
+        if (a.fromPlayer || !a.alive) continue;
+        if (a.height == ATTACK_HIGH) drawStone(a);
+        else                         drawFirePot(a);
+    }
 }
 
 // A raider reaching the tomb = LOSE (Member 1 calls this every frame)

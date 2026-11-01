@@ -37,7 +37,16 @@ void waves_update(float dt) {
 }
 
 void combat_update(float dt) {
-    // TODO
+    // Move every projectile (arrows, stones, fire pots).
+    // Reference: LearnOpenGL - 2D Game > Ball: Position += Velocity * dt;
+    for (Attack& a : g_attacks) {
+        if (!a.alive) continue;
+        a.x += a.vx * dt;
+        a.animTime += dt;
+        if (a.x < 0 || a.x > SCREEN_W) a.alive = false;   // off screen -> removed by cleanupDead()
+    }
+
+    // TODO: collisions + hits
 
     // TEST KEY (remove before submitting): K = everyone loses 1 hp
     // (lets Members 2 & 3 check red tint + health bars before combat exists)
