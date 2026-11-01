@@ -95,6 +95,63 @@ static void meleeUpdate(float dt) {
         }
     }
 }
+// ------------------------------------------------------------ R21: projectile hits
+// Reference: LearnOpenGL - 2D Game > Collisions:
+//   CheckCollision (AABB) + DoCollisions (loop over every brick, skip destroyed ones)
+const float PROJECTILE_SIZE = 10.0f;     // small box around a stone / pot / arrow
+
+static bool hits(const Attack& a, const Entity& t) {
+    if (!t.alive || a.lane != t.lane) return false;
+    float aLeft = a.x - PROJECTILE_SIZE / 2;
+    float tLeft = t.x - t.width / 2;
+    return aLeft + PROJECTILE_SIZE >= tLeft && tLeft + t.width >= aLeft;
+}
+
+// HIGH (stone) flies over a ducking guard, LOW (pot) rolls under a jumping guard
+static bool dodges(const Attack& a, const Entity& p) {
+    if (a.height == ATTACK_HIGH && p.isDucking) return true;
+    if (a.height == ATTACK_LOW  && p.isJumping) return true;
+    return false;
+}
+
+// a living shield-bearer in this lane, or nullptr
+static Entity* findShield(int lane) {
+    for (Entity& p : g_players)
+        if (p.alive && p.lane == lane && p.type == PLAYER_DEFENSE) return &p;
+    return nullptr;
+}
+
+static void projectileHits() {
+    for (Attack& a : g_attacks) {
+        if (!a.alive) continue;
+
+        if (a.fromPlayer) {
+            // ARROW: first raider it reaches (flies right -> smallest x is first)
+            // Only g_enemies is checked, so arrows can never hurt guards.
+            Entity* target = nullptr;
+            for (Entity& e : g_enemies)
+                if (hits(a, e) && (!target || e.x < target->x)) target = &e;
+            if (target) {
+                damageEnemy(*target, a.damage);    // also drops the coin if it dies
+                a.alive = false;
+            }
+        } else {
+            // STONE / POT: first guard it reaches (flies left -> largest x is first)
+            Entity* target = nullptr;
+            for (Entity& p : g_players)
+                if (hits(a, p) && !dodges(a, p) && (!target || p.x > target->x)) target = &p;
+            if (!target) continue;                 // missed / dodged -> keeps flying
+
+            // guard behind a shield-bearer: the shield absorbs the hit
+            if (target->isShielded && target->type != PLAYER_DEFENSE) {
+                Entity* shield = findShield(a.lane);
+                if (shield) target = shield;
+            }
+            damagePlayer(*target, a.damage);
+            a.alive = false;
+        }
+    }
+}
 void combat_update(float dt) {
     // Move every projectile (arrows, stones, fire pots).
     // Reference: LearnOpenGL - 2D Game > Ball: Position += Velocity * dt;
@@ -107,10 +164,15 @@ void combat_update(float dt) {
 
         meleeUpdate(dt);       // R20 + R22
 
-    // TODO: projectile hits (R21)
+        projectileHits();      // R21
 
     // TEST KEY (remove before submitting): K = everyone loses 1 hp
     // (lets Members 2 & 3 check red tint + health bars before combat exists)
+        // TEST KEYS (remove before submitting): set guard flags by hand,
+    // because Member 2's jump / duck / shield aren't merged yet
+    if (keyPressed(GLFW_KEY_4)) for (Entity& p : g_players) p.isDucking  = !p.isDucking;
+    if (keyPressed(GLFW_KEY_5)) for (Entity& p : g_players) p.isJumping  = !p.isJumping;
+    if (keyPressed(GLFW_KEY_6)) for (Entity& p : g_players) p.isShielded = !p.isShielded;  
     if (keyPressed(GLFW_KEY_K)) {
         for (Entity& p : g_players) if (--p.hp <= 0) p.alive = false;
         for (Entity& e : g_enemies) if (--e.hp <= 0) { e.alive = false; spawnCoin(e.lane, e.x); }
