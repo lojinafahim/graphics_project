@@ -121,9 +121,20 @@ void drawEnemyModel(EntityType type, float x, float y, float s, float animTime) 
 }
 
 // --------------------------------------------------------------- update
+// Brute runs, the other two walk (speeds are in config.h, pixels per second)
+static float enemySpeed(EntityType type) {
+    return (type == ENEMY_HARD) ? SPEED_ENEMY_RUN : SPEED_ENEMY_WALK;
+}
+
 void enemies_update(float dt) {
-    for (Entity& e : g_enemies) e.animTime += dt;
-    // TODO: movement + firing
+    for (Entity& e : g_enemies) {
+        if (!e.alive) continue;
+        e.animTime += dt;
+        // LearnOpenGL Camera "Movement speed": position += speed * deltaTime
+        if (e.state == STATE_WALKING)
+            e.x -= enemySpeed(e.type) * dt;      // minus = move left
+    }
+    // TODO: firing
 
     // TEST KEYS (remove before submitting): spawn in the lane under the mouse
     int lane = laneAtY(mouseY());
