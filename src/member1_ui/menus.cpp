@@ -22,7 +22,7 @@
 static float s_time = 0;
 
 void ui_init() {}
-void ui_reset() {}
+
 
 // Starts a new game from the beginning (cutscene first).
 static void startNewGame() {

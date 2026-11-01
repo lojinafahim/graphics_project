@@ -22,6 +22,12 @@ bool isLaneSelected(int lane) {
     return lane >= 0 && lane < NUM_LANES && s_selected[lane];
 }
 
+void ui_reset() {
+    for (int lane = 0; lane < NUM_LANES; lane++) s_selected[lane] = false;
+    s_hoverLane = -1;
+    s_hintTimer = 0;
+}
+
 void grid_update(float dt) {
     s_hoverLane = laneAtY(mouseY());
     if (mouseX() < TOMB_RIGHT_X) s_hoverLane = -1;
